@@ -9,7 +9,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import com.tlz.audiorecorddemo.R
-import com.tlz.audiorecorddemo.core.AudioRecordListener
+import com.tlz.audiorecorddemo.core.AudioPlayer
 import com.tlz.audiorecorddemo.core.AudioRecorder
 import com.tlz.audiorecorddemo.extensions.beginDelayedTransition
 import com.tlz.audiorecorddemo.extensions.firbidScroll
@@ -20,10 +20,14 @@ import java.io.File
  * By tomlezen
  * Create at 2018/12/21
  */
-class AudioRecordDialogFragment : BottomSheetDialogFragment(), AudioRecordListener {
+class AudioRecordDialogFragment : BottomSheetDialogFragment(), AudioRecorder.AudioRecordListener,
+    AudioPlayer.AudioPlayListener {
 
     /** 录制结果. */
     private var recordResult: ((File) -> Unit)? = null
+
+    /** 录制缓存文件路径. */
+    private var audioFileCachePath: String? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.dialog_fragment_audio_record, container, false)
@@ -45,8 +49,20 @@ class AudioRecordDialogFragment : BottomSheetDialogFragment(), AudioRecordListen
 
         iv_action.setOnClickListener {
             when ((iv_action.drawable as? LevelListDrawable)?.level) {
-                0 -> AudioRecorder.start()
-                1 -> AudioRecorder.stop()
+                0 -> {
+                    if (AudioRecorder.recordStatus == AudioRecorder.RecordStatus.RECORD_COMPLETE) {
+                        AudioPlayer.play(audioFileCachePath ?: return@setOnClickListener, this)
+                    } else {
+                        AudioRecorder.start()
+                    }
+                }
+                1 -> {
+                    if (AudioRecorder.recordStatus == AudioRecorder.RecordStatus.RECORD_COMPLETE) {
+                        AudioPlayer.stop()
+                    } else {
+                        AudioRecorder.stop()
+                    }
+                }
             }
         }
 
@@ -65,8 +81,9 @@ class AudioRecordDialogFragment : BottomSheetDialogFragment(), AudioRecordListen
     }
 
     override fun onRecordStart() {
-        (iv_action.drawable as? LevelListDrawable)?.level = 1
-        pb_record?.visibility = View.VISIBLE
+        setPlayMode()
+        iv_delete?.visibility = View.GONE
+        iv_done?.visibility = View.GONE
         Toast.makeText(context, "开始录制", Toast.LENGTH_LONG).show()
     }
 
@@ -74,36 +91,64 @@ class AudioRecordDialogFragment : BottomSheetDialogFragment(), AudioRecordListen
         Toast.makeText(context, "录制失败", Toast.LENGTH_LONG).show()
         (iv_action?.parent as? ViewGroup)?.beginDelayedTransition()
         iv_action?.visibility = View.VISIBLE
-        (iv_action?.drawable as? LevelListDrawable)?.level = 0
         iv_delete?.visibility = View.GONE
         iv_done?.visibility = View.GONE
-        pb_record?.visibility = View.GONE
+        setStopMode()
     }
 
-    override fun onRecordStop() {
+    override fun onRecordComplete(audioFileCachePath: String) {
+        this.audioFileCachePath = audioFileCachePath
         (iv_action?.parent as? ViewGroup)?.beginDelayedTransition()
-        iv_action?.visibility = View.INVISIBLE
         iv_delete?.visibility = View.VISIBLE
         iv_done?.visibility = View.VISIBLE
-        pb_record?.visibility = View.GONE
+        setStopMode()
     }
 
     override fun onRecordCancel() {
         (iv_action?.parent as? ViewGroup)?.beginDelayedTransition()
         iv_action?.visibility = View.VISIBLE
-        pb_record?.visibility = View.GONE
+        setStopMode()
         iv_delete?.visibility = View.GONE
         iv_done?.visibility = View.GONE
+        AudioPlayer.stop()
     }
 
-    override fun onRecordComplete(audioFile: File) {
+    override fun onRecordSaved(audioFile: File) {
         recordResult?.invoke(audioFile)
         dismiss()
+    }
+
+    override fun onPlayPreparing() {
+        setPlayMode()
+    }
+
+    override fun onPlayStart() {
+        setPlayMode()
+    }
+
+    override fun onPlayStop() {
+        setStopMode()
+    }
+
+    override fun onPlayError(t: Throwable) {
+        setStopMode()
+        Toast.makeText(context, "播放失败", Toast.LENGTH_LONG).show()
+    }
+
+    private fun setPlayMode() {
+        (iv_action?.drawable as? LevelListDrawable)?.level = 1
+        pb_record?.visibility = View.VISIBLE
+    }
+
+    private fun setStopMode() {
+        (iv_action?.drawable as? LevelListDrawable)?.level = 0
+        pb_record?.visibility = View.GONE
     }
 
     override fun onDestroy() {
         AudioRecorder.cancel()
         AudioRecorder.recordListener = null
+        AudioPlayer.cancel()
         super.onDestroy()
     }
 

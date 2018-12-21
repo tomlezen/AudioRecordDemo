@@ -7,38 +7,38 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
-import android.os.Build
 import android.os.Bundle
 import android.support.v7.app.AppCompatActivity
 import android.support.v7.widget.RecyclerView
-import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
-import android.view.ViewGroup
+import android.widget.Toast
 import com.tlz.audiorecorddemo.R
+import com.tlz.audiorecorddemo.core.AudioPlayer
 import com.tlz.audiorecorddemo.core.AudioRecorder
 import com.tlz.audiorecorddemo.extensions.dp2px
 import com.tlz.audiorecorddemo.model.AudioFileItem
 import com.tlz.audiorecorddemo.ui.record.AudioRecordDialogFragment
+import com.tlz.fuckpermission.FuckPermissionCallback
+import com.tlz.fuckpermission.FuckPermissionOperate
+import com.tlz.fuckpermission.annotations.FuckPermission
 import kotlinx.android.synthetic.main.activity_home.*
-import kotlinx.android.synthetic.main.item_audio.view.*
-import java.io.File
 
-
-class HomeActivity : AppCompatActivity() {
+@FuckPermission(permissions = [Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.RECORD_AUDIO])
+class HomeActivity : AppCompatActivity(), FuckPermissionCallback {
 
     private val viewModel by lazy { ViewModelProviders.of(this).get(HomeViewModel::class.java) }
 
     /** 适配器. */
-    private val adapter by lazy { AudioListAdapter(::onAudioPlay) }
+    private val adapter by lazy { HomeAudioLIstAdapter() }
+
+    /** 权限是否被运行. */
+    private var isPermissionOk = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_home)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            requestPermissions(PERMISSIONS, PERMISSION_REQUEST_CODE)
-        }
 
         initView()
         initData()
@@ -78,8 +78,6 @@ class HomeActivity : AppCompatActivity() {
             data.observe(this@HomeActivity, Observer {
                 adapter.setNewData(it ?: listOf())
             })
-
-            loadAudioList()
         }
     }
 
@@ -91,68 +89,43 @@ class HomeActivity : AppCompatActivity() {
     override fun onOptionsItemSelected(item: MenuItem?): Boolean =
         when (item?.itemId) {
             R.id.menu_action_add -> {
-                // 显示录制框
-                AudioRecordDialogFragment.show(this) { adapter.addData(AudioFileItem(it.name, it.absolutePath)) }
+                if (!isPermissionOk) {
+                    Toast.makeText(this, "缺少权限", Toast.LENGTH_LONG).show()
+                } else {
+                    // 录音前停止播放音频
+                    AudioPlayer.stop()
+                    // 显示录制框
+                    AudioRecordDialogFragment.show(this) {
+                        adapter.addData(AudioFileItem(it.name, it.absolutePath))
+                        rv_audio_list.smoothScrollToPosition(0)
+                    }
+                }
                 true
             }
             else -> super.onOptionsItemSelected(item)
         }
 
+    override fun onFuckPermissionRevoked(
+        operate: FuckPermissionOperate,
+        grantedPermissions: Array<String>,
+        revokedPermissions: Array<String>,
+        canShowRequestPermissionRationale: Boolean
+    ) {
+        if (canShowRequestPermissionRationale) {
+            operate.requestPermission()
+        }
+        swipe_refresh_layout.isEnabled = false
+    }
+
+    override fun onFuckPermissionGranted(operate: FuckPermissionOperate) {
+        isPermissionOk = true
+        swipe_refresh_layout.isEnabled = true
+        viewModel.loadAudioList()
+    }
+
     override fun onDestroy() {
         AudioRecorder.release()
+        AudioPlayer.release()
         super.onDestroy()
-    }
-
-    private fun onAudioPlay(item: AudioFileItem, position: Int) {
-
-    }
-
-    private class AudioListAdapter(private val onPlay: (AudioFileItem, Int) -> Unit) : RecyclerView.Adapter<ItemViewHolder>() {
-
-        val data = mutableListOf<AudioFileItem>()
-
-        override fun onCreateViewHolder(parent: ViewGroup, position: Int): ItemViewHolder =
-            ItemViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_audio, parent, false))
-
-        override fun getItemCount(): Int = data.size
-
-        override fun onBindViewHolder(holder: ItemViewHolder, position: Int) {
-            holder.itemView.apply {
-                val item = data[position]
-                tv_file_name.text = item.name
-
-                iv_play.setOnClickListener { onPlay.invoke(item, position) }
-
-                iv_delete.setOnClickListener {
-                    kotlin.runCatching {
-                        File(item.path).delete()
-                        data.removeAt(holder.adapterPosition)
-                        notifyItemRemoved(holder.adapterPosition)
-                    }
-                }
-            }
-        }
-
-        fun setNewData(data: List<AudioFileItem>) {
-            this.data.clear()
-            this.data.addAll(data)
-            notifyDataSetChanged()
-        }
-
-        fun addData(data: AudioFileItem) {
-            this.data.add(0, data)
-            notifyItemInserted(0)
-        }
-    }
-
-    private class ItemViewHolder(view: View) : RecyclerView.ViewHolder(view)
-
-    companion object {
-        private const val PERMISSION_REQUEST_CODE = 100001
-        private val PERMISSIONS = arrayOf(
-            Manifest.permission.WRITE_EXTERNAL_STORAGE,
-            Manifest.permission.READ_EXTERNAL_STORAGE,
-            Manifest.permission.RECORD_AUDIO
-        )
     }
 }

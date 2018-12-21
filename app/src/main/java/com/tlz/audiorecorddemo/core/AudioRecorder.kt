@@ -11,6 +11,9 @@ import java.io.File
  */
 interface AudioRecorder {
 
+    /** 录制状态. */
+    val recordStatus: RecordStatus
+
     /** 录制监听. */
     var recordListener: AudioRecordListener?
 
@@ -40,13 +43,15 @@ interface AudioRecorder {
     fun release()
 
     companion object : AudioRecorder {
-
         internal const val TAG = "AudioRecorder"
 
         private var sInstance: AudioRecorder? = null
 
         operator fun invoke(): AudioRecorder =
             sInstance ?: AudioRecorderImpl().also { sInstance = it }
+
+        override val recordStatus: RecordStatus
+            get() = AudioRecorder().recordStatus
 
         override var recordListener: AudioRecordListener?
             get() = AudioRecorder().recordListener
@@ -75,42 +80,43 @@ interface AudioRecorder {
         }
     }
 
-    enum class RecordStatus {
-        IDLE, PREPARING, RECORDING, STOP, SAVING
+    /**
+     * 音频录制监听.
+     */
+    interface AudioRecordListener {
+        /**
+         * 录制开始.
+         */
+        fun onRecordStart()
+
+        /**
+         * 录制完成.
+         * @param audioFileCachePath String
+         */
+        fun onRecordComplete(audioFileCachePath: String)
+
+        /**
+         * 录制取消.
+         */
+        fun onRecordCancel()
+
+        /**
+         * 录制保存完成.
+         * @param audioFile File
+         */
+        fun onRecordSaved(audioFile: File)
+
+        /**
+         * 录制错误.
+         * @param t Throwable
+         */
+        fun onRecordError(t: Throwable)
     }
 
-}
+    enum class RecordStatus {
+        IDLE, PREPARING, RECORDING, RECORD_COMPLETE, SAVING
+    }
 
-/**
- * 音频录制监听.
- */
-interface AudioRecordListener {
-    /**
-     * 录制开始.
-     */
-    fun onRecordStart()
-
-    /**
-     * 录制停止.
-     */
-    fun onRecordStop()
-
-    /**
-     * 录制取消.
-     */
-    fun onRecordCancel()
-
-    /**
-     * 录制完成.
-     * @param audioFile File
-     */
-    fun onRecordComplete(audioFile: File)
-
-    /**
-     * 录制错误.
-     * @param t Throwable
-     */
-    fun onRecordError(t: Throwable)
 }
 
 private class AudioRecorderImpl : AudioRecorder {
@@ -121,13 +127,12 @@ private class AudioRecorderImpl : AudioRecorder {
                 Log.i(AudioRecorder.TAG, "what = $what, extra = $extra")
                 when (what) {
                     MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED -> {
-                        recordStatus = AudioRecorder.RecordStatus.STOP
-                        _recordListener?.onRecordStop()
+                        this@AudioRecorderImpl.stop()
                     }
                 }
             }
             setOnErrorListener { _, what, extra ->
-                recordStatus = AudioRecorder.RecordStatus.IDLE
+                _recordStatus = AudioRecorder.RecordStatus.IDLE
                 val errorMsg = "what = $what, extra = $extra"
                 _recordListener?.onRecordError(Exception("errorMsg"))
                 Log.e(AudioRecorder.TAG, errorMsg)
@@ -135,10 +140,16 @@ private class AudioRecorderImpl : AudioRecorder {
         }
     }
 
-    /** 录制监听. */
-    private var _recordListener: AudioRecordListener? = null
+    /** 录制状态. */
+    private var _recordStatus = AudioRecorder.RecordStatus.IDLE
 
-    override var recordListener: AudioRecordListener?
+    override val recordStatus: AudioRecorder.RecordStatus
+        get() = _recordStatus
+
+    /** 录制监听. */
+    private var _recordListener: AudioRecorder.AudioRecordListener? = null
+
+    override var recordListener: AudioRecorder.AudioRecordListener?
         get() = _recordListener
         set(value) {
             _recordListener = value
@@ -149,13 +160,10 @@ private class AudioRecorderImpl : AudioRecorder {
         get() = File(Configs.AUDIO_SAVE_FLODER, "${System.currentTimeMillis()}.m4a").create()
 
     /** 创建音频缓存文件 */
-    private val audioCacheFile: File = File(Configs.AUDIO_SAVE_FLODER, "${System.currentTimeMillis()}.cache").create()
-    /** 录制状态. */
-    private var recordStatus = AudioRecorder.RecordStatus.IDLE
-
+    private val audioCacheFile: File = File(Configs.AUDIO_SAVE_FLODER, "audio_record_demo.cache").create()
 
     override fun start() {
-        if (recordStatus != AudioRecorder.RecordStatus.IDLE) return
+        if (_recordStatus != AudioRecorder.RecordStatus.IDLE) return
         runCatching {
             mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
             mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -163,45 +171,45 @@ private class AudioRecorderImpl : AudioRecorder {
             // 最大1分钟
             mediaRecorder.setMaxDuration(60_000)
             mediaRecorder.setOutputFile(audioCacheFile.absolutePath )
-            recordStatus = AudioRecorder.RecordStatus.PREPARING
+            _recordStatus = AudioRecorder.RecordStatus.PREPARING
             mediaRecorder.prepare()
             mediaRecorder.start()
-            recordStatus = AudioRecorder.RecordStatus.RECORDING
+            _recordStatus = AudioRecorder.RecordStatus.RECORDING
             _recordListener?.onRecordStart()
         }.onFailure {
             Log.e(AudioRecorder.TAG, "音频录制失败", it)
-            recordStatus = AudioRecorder.RecordStatus.IDLE
+            _recordStatus = AudioRecorder.RecordStatus.IDLE
             _recordListener?.onRecordError(it)
         }
     }
 
     override fun stop() {
-        if (recordStatus != AudioRecorder.RecordStatus.RECORDING) return
+        if (_recordStatus != AudioRecorder.RecordStatus.RECORDING) return
         mediaRecorder.stop()
-        recordStatus = AudioRecorder.RecordStatus.STOP
-        _recordListener?.onRecordStop()
+        _recordStatus = AudioRecorder.RecordStatus.RECORD_COMPLETE
+        _recordListener?.onRecordComplete(audioCacheFile.absolutePath)
     }
 
     override fun cancel() {
         mediaRecorder.reset()
         audioCacheFile.delete()
-        recordStatus = AudioRecorder.RecordStatus.IDLE
+        _recordStatus = AudioRecorder.RecordStatus.IDLE
         _recordListener?.onRecordCancel()
     }
 
     override fun done() {
-        if (recordStatus != AudioRecorder.RecordStatus.STOP && audioCacheFile.exists()) return
+        if (_recordStatus != AudioRecorder.RecordStatus.RECORD_COMPLETE && audioCacheFile.exists()) return
         kotlin.runCatching {
             // 这里应该异步保存 偷个懒
-            _recordListener?.onRecordComplete(audioCacheFile.copyTo(this.audioFile, true))
+            _recordListener?.onRecordSaved(audioCacheFile.copyTo(this.audioFile, true))
         }.onFailure {
             _recordListener?.onRecordError(it)
         }
-        recordStatus = AudioRecorder.RecordStatus.IDLE
+        _recordStatus = AudioRecorder.RecordStatus.IDLE
     }
 
     override fun release() {
-        recordStatus = AudioRecorder.RecordStatus.IDLE
+        _recordStatus = AudioRecorder.RecordStatus.IDLE
         mediaRecorder.release()
     }
 
