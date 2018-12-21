@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AudioRecordDemo</string>
+    <string name="menu_add_audio">录制音频</string>
+</resources>
