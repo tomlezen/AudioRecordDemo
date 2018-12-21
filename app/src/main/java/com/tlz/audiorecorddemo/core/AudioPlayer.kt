@@ -85,9 +85,6 @@ interface AudioPlayer {
 
 private class AudioPlayerImpl : AudioPlayer {
 
-    /** 是否已经准备完成. */
-    private var isPrepared = false
-
     /** 是否正在准备中. */
     private var isPreparing = false
         set(value) {
@@ -103,7 +100,6 @@ private class AudioPlayerImpl : AudioPlayer {
             setAudioAttributes(AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
             setOnPreparedListener {
                 isPreparing = false
-                isPrepared = true
                 start()
                 playListener?.onPlayStart()
             }
